@@ -1,0 +1,9 @@
+# The Vercel deploy only needs web/. Keep the Android project out of the upload.
+app/
+gradle/
+gradlew
+gradlew.bat
+build.gradle.kts
+settings.gradle.kts
+gradle.properties
+cctvsamples.mp4
