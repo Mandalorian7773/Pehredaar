@@ -817,6 +817,7 @@ function usePlayback(kind) {
     $("skelLabel").textContent = kind === "sample" ? "Loading sample footage" : "Loading demo clip";
     video.setAttribute("src", src);
     video.load();
+    armWatchdog();
   }
   state.score = 0;
   Gate.reset();
@@ -1406,35 +1407,49 @@ if (!SR) {
 }
 
 /* --- clip loading, with a synthetic fallback ---------------------- */
+/* The watchdog catches a load that stalls silently — a request that opens and
+   then never delivers a frame. It has to time the load actually in flight, so
+   it is armed whenever a source is set and pushed back by every progress event:
+   bytes still arriving means slow, not stuck. Timed once from page load instead,
+   the 6.4MB sample lost a wall-clock race on any ordinary connection and swapped
+   itself for the demo clip, and a source picked later than the deadline was left
+   under the loading skeleton with no timer to rescue it. */
 var videoSettled = false;
+var watchdog = null;
+function clearWatchdog() { clearTimeout(watchdog); watchdog = null; }
+function armWatchdog() {
+  clearWatchdog();
+  watchdog = setTimeout(function () {
+    if (videoSettled || state.source === "camera") return;
+    videoSettled = true;
+    if (state.source === "sample") {
+      useClip();
+      note("Sample footage took too long to load — showing the demo clip instead.");
+    } else if (state.source === "clip") {
+      useSynthetic("Demo clip took too long to load — running a simulated scene instead.");
+    }
+  }, CFG.CLIP_TIMEOUT_MS);
+}
 function videoReady() {
   showSkeleton(false);
   $("timecode").textContent = mmss(video.currentTime) + " / " + mmss(video.duration);
   if (videoSettled) return;
   videoSettled = true;
+  clearWatchdog();
   if (video.paused) attemptPlay();
 }
 video.addEventListener("canplay", videoReady);
 video.addEventListener("loadeddata", videoReady);
+video.addEventListener("progress", function () { if (!videoSettled) armWatchdog(); });
 video.addEventListener("error", function () {
   if (videoSettled || state.source === "camera") return;
   videoSettled = true;
+  clearWatchdog();
   /* The sample is the optional extra, so drop back to the clip; only a missing
      clip is worth falling all the way to the drawn scene. */
   if (state.source === "sample") useClip(), note("Sample footage could not be loaded.");
   else useSynthetic("Demo clip could not be loaded — running a simulated scene instead.");
 });
-setTimeout(function () {
-  if (videoSettled) return;
-  if (state.source === "sample") {
-    videoSettled = true;
-    useClip();
-    note("Sample footage took too long to load — showing the demo clip instead.");
-  } else if (state.source === "clip") {
-    videoSettled = true;
-    useSynthetic("Demo clip took too long to load — running a simulated scene instead.");
-  }
-}, CFG.CLIP_TIMEOUT_MS);
 
 /* Some browsers refuse even a muted autoplay until a gesture. */
 $("video").addEventListener("click", function () {
